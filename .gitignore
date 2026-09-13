@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+
+# Streamlit Community Cloud secrets (real values must never be committed)
+.streamlit/secrets.toml
+
+# Regression / QA output (generated locally, not app source)
+results/
+regression_results.json

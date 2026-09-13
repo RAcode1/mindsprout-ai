@@ -1,0 +1,103 @@
+[
+  {
+    "id": "TC001",
+    "name": "Boredom is okay",
+    "age": 5,
+    "concept": "Boredom is alright. Parents will sometimes be busy and friends may not be available. A child does not always need to be entertained or engaged by someone or something.",
+    "theme": "Anything",
+    "human_scores": {
+      "concept_fidelity": 3,
+      "age_appropriateness": 5,
+      "story_quality": 4,
+      "show_dont_lecture": 4,
+      "coherence": 5,
+      "emotional_safety": 5
+    },
+    "human_note": "Do not change the lesson into 'boredom is good because it leads to creativity.' Boredom itself should be acceptable."
+  },
+
+  {
+    "id": "TC002",
+    "name": "Persistence and self-motivation",
+    "age": 5,
+    "concept": "Persistence is an important skill. Doing a little practice such as Kumon every day can help you improve. You should do it for your own growth, not only to please someone else.",
+    "theme": "Anything",
+    "human_scores": {
+      "concept_fidelity": 5,
+      "age_appropriateness": 4,
+      "story_quality": 3,
+      "show_dont_lecture": 2,
+      "coherence": 4,
+      "emotional_safety": 5
+    },
+    "human_note": "The lesson was preserved well, but the story became quite preachy."
+  },
+
+  {
+    "id": "TC003",
+    "name": "Saving money",
+    "age": 5,
+    "concept": "Saving money means keeping some money instead of spending all of it right away. Having money saved gives you choices later and you do not have to buy something every time you receive money.",
+    "theme": "Family and a toy store",
+    "human_scores": {
+      "concept_fidelity": 3,
+      "age_appropriateness": 5,
+      "story_quality": 3,
+      "show_dont_lecture": 2,
+      "coherence": 5,
+      "emotional_safety": 5
+    },
+    "human_note": "Saving should not be reduced to delaying today's purchase so you can buy a more desirable item later."
+  },
+
+  {
+    "id": "TC004",
+    "name": "Healthy positive thinking",
+    "age": 5,
+    "concept": "Positive thinking means believing that things can get better and that you can try again when something goes wrong. It does not mean you must always feel happy. Feeling sad, disappointed, angry, or worried is normal too.",
+    "theme": "School",
+    "human_scores": {
+      "concept_fidelity": 5,
+      "age_appropriateness": 5,
+      "story_quality": 4,
+      "show_dont_lecture": 4,
+      "coherence": 5,
+      "emotional_safety": 5
+    },
+    "human_note": "Avoid toxic positivity or implying that negative emotions should disappear."
+  },
+
+  {
+    "id": "TC005",
+    "name": "Losing gracefully",
+    "age": 5,
+    "concept": "It is normal to feel disappointed or upset when you lose a game. You do not have to pretend that losing feels good. But losing does not mean you are bad at something, and it is important not to be mean to the winner or give up forever. You can calm down, congratulate the other person, and try again another time.",
+    "theme": "Playing a game with friends",
+    "human_scores": {
+      "concept_fidelity": 5,
+      "age_appropriateness": 5,
+      "story_quality": 3.5,
+      "show_dont_lecture": 3,
+      "coherence": 5,
+      "emotional_safety": 5
+    },
+    "human_note": "Story quality felt closer to 3.5 than 4, but the lesson itself was strong."
+  },
+
+  {
+    "id": "TC006",
+    "name": "Authenticity and peer influence",
+    "age": 17,
+    "concept": "It is important to stay true to yourself even when other people have opinions about you. Listen to genuine feedback and remain willing to grow, but do not let approval, criticism, comparison, popularity, social media, friendships, or relationships make you abandon your values, interests, personality, goals, appearance, or choices simply to be accepted. Being yourself does not mean ignoring everyone; it means recognizing the difference between feedback that helps you grow and pressure that makes you less like yourself.",
+    "theme": "High school friendships, social media, and fitting in",
+    "human_scores": {
+      "concept_fidelity": 5,
+      "age_appropriateness": null,
+      "story_quality": 4,
+      "show_dont_lecture": 4,
+      "coherence": 5,
+      "emotional_safety": 5
+    },
+    "human_note": "Age appropriateness seemed acceptable, but human confidence was too low to use it as a calibration label. Future rubric may need a separate audience-authenticity criterion."
+  }
+]
