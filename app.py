@@ -315,8 +315,8 @@ if st.session_state["stage"] == "create":
                 value=st.session_state["input_concept"],
                 height=170,
                 placeholder=(
-                    "e.g. Boredom is alright. Parents will sometimes be busy "
-                    "and friends may not be available."
+                    "Describe the lesson like you'd explain it to a friend - "
+                    "MindSprout will find the story in it."
                 ),
                 help=(
                     "Describe the idea in your own words - MindSprout will "
