@@ -72,7 +72,7 @@ the reader can remember.
 """
 
     message = client.messages.parse(
-        model="claude-haiku-4-5-20251001",
+        model="claude-sonnet-5",
         max_tokens=2500,
         system=system_prompt,
         messages=[
@@ -151,7 +151,7 @@ Is the content emotionally appropriate and safe?
 """
 
     judge_message = client.messages.parse(
-        model="claude-sonnet-5",
+        model="claude-opus-5",
         max_tokens=3000,
         system=judge_system_prompt,
         messages=[

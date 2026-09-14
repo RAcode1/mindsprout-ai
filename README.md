@@ -14,14 +14,14 @@ second, separate Claude model as a judge.
   **Generate Story**, and read the result as a set of page cards with the
   core lesson highlighted at the end.
 - **Story generation only on demand** — clicking **Generate Story** calls
-  only the story generator (Claude Haiku). It does **not** automatically
+  only the story generator (Claude Sonnet). It does **not** automatically
   run the AI quality evaluator, to keep API cost predictable.
 - **Automatic structural QA** — cheap, local, non-AI checks (exactly 6
   pages, title present, core lesson present, no empty pages) run
   automatically after every generation, at no API cost.
 - **Optional AI quality check** — inside the collapsed **"Developer /
   Quality Check"** section, a separate **"Run AI Quality Check"** button
-  calls a second Claude model (Sonnet) as a judge, scoring the story on
+  calls a second Claude model (Opus) as a judge, scoring the story on
   six criteria (concept fidelity, age appropriateness, story quality,
   show-don't-lecture, coherence, emotional safety). This only runs when
   you click that button.
