@@ -1,4 +1,7 @@
+import concurrent.futures
+import itertools
 import os
+import time
 
 import streamlit as st
 
@@ -29,10 +32,18 @@ from mindsprout_core import (
     check_story_structure,
     estimate_cost,
 )
+from ui import (
+    inject_base_styles,
+    render_header,
+    render_progress_bar,
+    render_cover,
+    render_page_card,
+    render_lesson_card,
+)
 
 
 # ==========================================
-# PAGE SETUP + LIGHT STYLING
+# PAGE SETUP + STYLING
 # ==========================================
 
 st.set_page_config(
@@ -41,183 +52,157 @@ st.set_page_config(
     layout="centered",
 )
 
-st.markdown(
-    """
-    <style>
-    .mindsprout-header {
-        text-align: center;
-        padding: 0.5rem 0 1rem 0;
-    }
-    .mindsprout-header h1 {
-        font-size: 2.5rem;
-        margin-bottom: 0.1rem;
-        color: #2E7D32;
-    }
-    .mindsprout-header p {
-        font-size: 1.05rem;
-        color: #6b7a6e;
-        margin-top: 0;
-    }
-    .section-gap {
-        margin-top: 1.25rem;
-    }
-    button[kind="primary"] {
-        background-color: #2E7D32 !important;
-        border-color: #2E7D32 !important;
-        color: #FFFFFF !important;
-    }
-    button[kind="primary"]:hover {
-        background-color: #1B5E20 !important;
-        border-color: #1B5E20 !important;
-        color: #FFFFFF !important;
-    }
-    button[kind="primary"]:active {
-        background-color: #174E1B !important;
-        border-color: #174E1B !important;
-        color: #FFFFFF !important;
-    }
-    </style>
-
-    <div class="mindsprout-header">
-        <h1>🌱 MindSprout AI</h1>
-        <p>Turn important life lessons into age-appropriate stories.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+inject_base_styles()
+render_header()
 
 
 # ==========================================
-# USER INPUTS
+# SESSION STATE DEFAULTS
 # ==========================================
+#
+# "stage" drives which screen is shown: the creation form, the page-by-
+# page reader, or the standalone core-lesson screen. Keeping it
+# explicit (rather than inferring the view from whether a story
+# happens to exist) makes every navigation action - Next/Previous,
+# "See the lesson", "Edit my idea", "Create another story" - a simple,
+# predictable state transition instead of an ad-hoc rerun.
 
-with st.form("story_form"):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        age = st.number_input(
-            "Child's age",
-            min_value=1,
-            max_value=18,
-            value=5,
-            step=1,
-        )
-
-    with col2:
-        theme = st.text_input(
-            "Story theme",
-            placeholder="e.g. Family and a toy store",
-        )
-
-    concept = st.text_area(
-        "Lesson / concept to teach",
-        height=150,
-        placeholder=(
-            "e.g. Boredom is alright. Parents will sometimes be busy "
-            "and friends may not be available."
+EXAMPLE_PROMPTS = [
+    {
+        "label": "Handling disappointment",
+        "concept": (
+            "It's okay to feel disappointed when things don't go as "
+            "planned. Those feelings pass, and it's okay to try again."
         ),
-    )
+        "theme": "Anything",
+    },
+    {
+        "label": "Saving money",
+        "concept": (
+            "Saving a little at a time adds up, and it's okay to wait "
+            "before buying something you want."
+        ),
+        "theme": "Anything",
+    },
+    {
+        "label": "Being yourself",
+        "concept": (
+            "You don't have to change who you are to fit in. Being "
+            "yourself is what makes you interesting."
+        ),
+        "theme": "Anything",
+    },
+]
 
-    submitted = st.form_submit_button(
-        "Generate Story",
-        use_container_width=True,
-        type="primary",
-    )
+LOADING_PHRASES = [
+    "Planting the idea...",
+    "Growing the characters...",
+    "Turning the lesson into a story...",
+]
+
+defaults = {
+    "stage": "create",              # "create" | "reading" | "lesson"
+    "story": None,
+    "story_inputs": None,           # (age, concept, theme) used to generate the current story
+    "structural_checks": None,
+    "generation_error": None,
+    "generation_usage": None,
+    "evaluation": None,
+    "evaluation_error": None,
+    "evaluation_usage": None,
+    "current_page": 1,              # 1..6 story pages (lesson is its own stage, not a page slot)
+    "input_age": 5,
+    "input_theme": "Anything",
+    "input_concept": "",
+}
+
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def start_new_story():
+    """Clear everything and return to a blank creation screen."""
+    st.session_state["stage"] = "create"
+    st.session_state["story"] = None
+    st.session_state["story_inputs"] = None
+    st.session_state["structural_checks"] = None
+    st.session_state["generation_error"] = None
+    st.session_state["generation_usage"] = None
+    st.session_state["evaluation"] = None
+    st.session_state["evaluation_error"] = None
+    st.session_state["evaluation_usage"] = None
+    st.session_state["current_page"] = 1
+    st.session_state["input_age"] = 5
+    st.session_state["input_theme"] = "Anything"
+    st.session_state["input_concept"] = ""
+
+
+def edit_inputs():
+    """Return to the creation screen, pre-filled with this story's inputs."""
+    age, concept, theme = st.session_state["story_inputs"]
+    st.session_state["input_age"] = age
+    st.session_state["input_theme"] = theme
+    st.session_state["input_concept"] = concept
+    st.session_state["stage"] = "create"
+
+
+def apply_example(example):
+    """Populate the form from an example prompt. No API call."""
+    st.session_state["input_concept"] = example["concept"]
+    st.session_state["input_theme"] = example["theme"]
+
+
+def run_story_generation(age, concept, theme):
+    """Call generate_story exactly once, rotating friendly status text
+    while the (single) request is in flight. The API call runs in a
+    background thread purely so the displayed copy can rotate every
+    ~1.1s; it does not add, retry, or duplicate any request.
+    """
+
+    placeholder = st.empty()
+    with st.spinner("Growing your story..."):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                generate_story, age, concept, theme, return_usage=True
+            )
+            for phrase in itertools.cycle(LOADING_PHRASES):
+                placeholder.caption(phrase)
+                if future.done():
+                    break
+                time.sleep(1.1)
+        placeholder.empty()
+        return future.result()
 
 
 # ==========================================
-# GENERATE STORY ONLY (NO AI EVALUATION HERE)
+# DEVELOPER / QUALITY CHECK (COLLAPSED, UNOBTRUSIVE)
 # ==========================================
 #
-# Generate Story calls only generate_story(). Structural QA is cheap
-# and local (no API call), so it also runs automatically here. The AI
-# evaluator (evaluate_story) is intentionally NOT called in this block
-# - it only runs when the user explicitly clicks "Run AI Quality Check"
-# further down, since that call uses the Opus 5 judge model and costs
-# real money.
-#
-# The story, and its structural checks, are cached in st.session_state
-# so that later reruns (opening the expander, clicking the quality
-# check button) redisplay the same story instead of regenerating it.
+# Structural QA is cheap, local, and deterministic, so it's already
+# computed and simply displayed here. The AI quality evaluator only
+# runs when the developer explicitly clicks the button below - it is
+# never triggered automatically, including when this expander is
+# opened or the page is navigated.
 
-if submitted:
-    if not concept.strip():
-        st.warning("Please enter a lesson or concept before generating a story.")
-    else:
-        # A new story invalidates any previous evaluation.
-        st.session_state["story"] = None
-        st.session_state["story_inputs"] = None
-        st.session_state["structural_checks"] = None
-        st.session_state["generation_error"] = None
-        st.session_state["generation_usage"] = None
-        st.session_state["evaluation"] = None
-        st.session_state["evaluation_error"] = None
-        st.session_state["evaluation_usage"] = None
-
-        with st.spinner("Writing your story..."):
-            try:
-                story, usage = generate_story(age, concept, theme, return_usage=True)
-                st.session_state["story"] = story
-                st.session_state["story_inputs"] = (age, concept, theme)
-                st.session_state["structural_checks"] = check_story_structure(story)
-                st.session_state["generation_usage"] = usage
-            except Exception as error:
-                st.session_state["generation_error"] = str(error)
-
-
-# ==========================================
-# ERROR DISPLAY (FRIENDLY, NO TRACEBACKS)
-# ==========================================
-
-if st.session_state.get("generation_error"):
-    st.error(
-        "Something went wrong while generating the story. "
-        "Please try again in a moment.\n\n"
-        f"Details: {st.session_state['generation_error']}"
-    )
-
-
-# ==========================================
-# DISPLAY STORY (FROM CACHE - NOT REGENERATED)
-# ==========================================
-
-story = st.session_state.get("story")
-
-if story is not None:
-    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
-    st.header(story.title)
-
-    for page in story.pages:
-        with st.container(border=True):
-            st.markdown(f"#### 📖 Page {page.page_number}")
-            st.write(page.story_text)
-
-    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
-    with st.container(border=True):
-        st.markdown("#### 🌿 Core Lesson")
-        st.write(story.core_lesson)
-
-    # ==========================================
-    # DEVELOPER / QUALITY CHECK (COLLAPSED)
-    # ==========================================
-
-    st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
+def render_dev_panel(story):
+    st.markdown('<div class="ms-gap">', unsafe_allow_html=True)
     with st.expander("Developer / Quality Check", expanded=False):
 
-        st.markdown("**Structural QA** _(automatic, no API cost)_")
+        st.caption("Structural QA (automatic, no API cost)")
         structural_checks = st.session_state.get("structural_checks") or {}
         for check_name, passed in structural_checks.items():
             st.write(f"- {check_name}: {'PASS' if passed else 'FAIL'}")
 
         st.divider()
 
-        st.markdown("**AI Quality Check** _(calls the Opus 5 judge model)_")
+        st.caption("AI Quality Check (calls the Opus 5 judge model - not free)")
         run_quality_check = st.button("Run AI Quality Check")
 
         if run_quality_check:
             eval_age, eval_concept, eval_theme = st.session_state["story_inputs"]
 
-            with st.spinner("Running AI quality evaluation..."):
+            with st.spinner("Reviewing story quality..."):
                 try:
                     evaluation, eval_usage = evaluate_story(
                         eval_age, eval_concept, eval_theme, story, return_usage=True
@@ -256,7 +241,7 @@ if story is not None:
 
         st.divider()
 
-        st.markdown("**API Usage & Cost** _(estimated, developer-only)_")
+        st.caption("API usage & cost (estimated, developer-only)")
 
         generation_usage = st.session_state.get("generation_usage")
         if generation_usage:
@@ -281,5 +266,194 @@ if story is not None:
             )
         else:
             st.caption("Run the AI Quality Check above to see its usage and cost.")
-elif not submitted:
-    st.info("Fill in the details above and click **Generate Story** to begin.")
+
+
+def render_story_controls():
+    """The two low-key actions always available once a story exists."""
+    st.markdown('<div class="ms-gap-sm"></div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Edit my idea", use_container_width=True):
+            edit_inputs()
+            st.rerun()
+    with col2:
+        if st.button("Create another story", use_container_width=True):
+            start_new_story()
+            st.rerun()
+
+
+# ==========================================
+# CREATION SCREEN
+# ==========================================
+
+if st.session_state["stage"] == "create":
+
+    with st.container(border=True):
+        st.markdown(
+            """
+            <div class="ms-eyebrow">Create a story</div>
+            <div class="ms-form-title">Tell us about your child and the lesson</div>
+            <div class="ms-form-subtitle">
+                MindSprout turns this into a short, age-appropriate 6-page story.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("story_form"):
+            age = st.slider(
+                "Child's age",
+                min_value=1,
+                max_value=18,
+                value=st.session_state["input_age"],
+                help="Used to set the story's language, tone, and pacing.",
+            )
+
+            concept = st.text_area(
+                "Lesson or concept to teach",
+                value=st.session_state["input_concept"],
+                height=170,
+                placeholder=(
+                    "e.g. Boredom is alright. Parents will sometimes be busy "
+                    "and friends may not be available."
+                ),
+                help=(
+                    "Describe the idea in your own words - MindSprout will "
+                    "shape it into a story instead of a lecture."
+                ),
+            )
+
+            theme = st.text_input(
+                "Story theme",
+                value=st.session_state["input_theme"],
+                help='Optional. Leave it as "Anything" if you don\'t have a setting in mind.',
+            )
+
+            st.markdown('<div class="ms-gap-sm"></div>', unsafe_allow_html=True)
+
+            submitted = st.form_submit_button(
+                "Generate My Story",
+                use_container_width=True,
+                type="primary",
+            )
+
+        st.markdown('<div class="ms-examples-label">Need an idea? Try one of these</div>', unsafe_allow_html=True)
+        example_cols = st.columns(3)
+        for col, example in zip(example_cols, EXAMPLE_PROMPTS):
+            with col:
+                if st.button(example["label"], use_container_width=True, key=f"example_{example['label']}"):
+                    apply_example(example)
+                    st.rerun()
+
+    if submitted:
+        if not concept.strip():
+            st.warning("Please enter a lesson or concept before generating a story.")
+        else:
+            try:
+                story, usage = run_story_generation(age, concept, theme)
+                st.session_state["story"] = story
+                st.session_state["story_inputs"] = (age, concept, theme)
+                st.session_state["structural_checks"] = check_story_structure(story)
+                st.session_state["generation_usage"] = usage
+                st.session_state["evaluation"] = None
+                st.session_state["evaluation_error"] = None
+                st.session_state["evaluation_usage"] = None
+                st.session_state["generation_error"] = None
+                st.session_state["current_page"] = 1
+                st.session_state["stage"] = "reading"
+                st.rerun()
+            except Exception as error:
+                st.session_state["generation_error"] = str(error)
+
+    if st.session_state.get("generation_error"):
+        st.error(
+            "Something went wrong while generating the story. "
+            "Please try again in a moment.\n\n"
+            f"Details: {st.session_state['generation_error']}"
+        )
+
+
+# ==========================================
+# BOOK READER (FROM CACHE - NO API CALLS)
+# ==========================================
+#
+# Everything below reads story / evaluation data that already lives in
+# st.session_state. Paging, opening the dev expander, and switching to
+# the lesson screen only ever change st.session_state and rerun the
+# script - none of it touches generate_story() or evaluate_story()
+# again.
+
+story = st.session_state.get("story")
+total_pages = len(story.pages) if story is not None else 0
+
+if st.session_state["stage"] == "reading" and story is not None:
+
+    current = st.session_state["current_page"]
+
+    render_cover(story.title)
+
+    page = story.pages[current - 1]
+    render_page_card(page.story_text)
+
+    render_progress_bar(current, total_pages)
+    st.markdown(
+        f'<div class="ms-page-indicator">Page {current} of {total_pages}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="ms-gap-sm"></div>', unsafe_allow_html=True)
+    nav_col1, nav_col2 = st.columns(2)
+
+    with nav_col1:
+        if st.button(
+            "← Previous",
+            use_container_width=True,
+            disabled=(current == 1),
+        ):
+            st.session_state["current_page"] = max(1, current - 1)
+            st.rerun()
+
+    with nav_col2:
+        is_last_page = current >= total_pages
+        next_label = "See the lesson →" if is_last_page else "Next →"
+        if st.button(next_label, use_container_width=True, type="primary"):
+            if is_last_page:
+                st.session_state["stage"] = "lesson"
+            else:
+                st.session_state["current_page"] = current + 1
+            st.rerun()
+
+    render_story_controls()
+    render_dev_panel(story)
+
+
+# ==========================================
+# CORE LESSON SCREEN
+# ==========================================
+
+elif st.session_state["stage"] == "lesson" and story is not None:
+
+    render_cover(story.title)
+    render_lesson_card(story.core_lesson)
+
+    st.markdown('<div class="ms-gap-sm"></div>', unsafe_allow_html=True)
+    lesson_col1, lesson_col2 = st.columns(2)
+
+    with lesson_col1:
+        if st.button("← Back to story", use_container_width=True):
+            st.session_state["stage"] = "reading"
+            st.session_state["current_page"] = total_pages
+            st.rerun()
+
+    with lesson_col2:
+        if st.button("Read again from Page 1", use_container_width=True, type="primary"):
+            st.session_state["stage"] = "reading"
+            st.session_state["current_page"] = 1
+            st.rerun()
+
+    render_story_controls()
+    render_dev_panel(story)
+
+
+elif st.session_state["stage"] == "create" and not st.session_state.get("generation_error"):
+    st.info("Fill in the details above and click **Generate My Story** to begin.")

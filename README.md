@@ -11,9 +11,9 @@ second, separate Claude model as a judge.
 ## Current MVP features
 
 - **Streamlit web app** (`app.py`) — enter age, theme, and a lesson, click
-  **Generate Story**, and read the result as a set of page cards with the
-  core lesson highlighted at the end.
-- **Story generation only on demand** — clicking **Generate Story** calls
+  **Generate My Story**, and read the result as a one-page-at-a-time
+  digital book (`ui.py`), ending in a standalone Core Lesson screen.
+- **Story generation only on demand** — clicking **Generate My Story** calls
   only the story generator (Claude Sonnet 5). It does **not** automatically
   run the AI quality evaluator, to keep API cost predictable.
 - **Automatic structural QA** — cheap, local, non-AI checks (exactly 6
@@ -95,6 +95,7 @@ revoke it from the Anthropic console immediately.
 
 ```
 app.py                       Streamlit frontend (entry point for the web app)
+ui.py                        Pure UI rendering helpers (CSS, header, page/lesson cards) used by app.py
 mindsprout.py                Original interactive CLI app
 mindsprout_core.py           Shared backend: story generation, AI evaluation, structural checks
 regression.py                Generation regression suite (fixed quality thresholds)
