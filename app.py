@@ -27,6 +27,7 @@ from mindsprout_core import (
     generate_story,
     evaluate_story,
     check_story_structure,
+    estimate_cost,
 )
 
 
@@ -132,7 +133,7 @@ with st.form("story_form"):
 # and local (no API call), so it also runs automatically here. The AI
 # evaluator (evaluate_story) is intentionally NOT called in this block
 # - it only runs when the user explicitly clicks "Run AI Quality Check"
-# further down, since that call uses the Sonnet judge model and costs
+# further down, since that call uses the Opus 5 judge model and costs
 # real money.
 #
 # The story, and its structural checks, are cached in st.session_state
@@ -148,15 +149,18 @@ if submitted:
         st.session_state["story_inputs"] = None
         st.session_state["structural_checks"] = None
         st.session_state["generation_error"] = None
+        st.session_state["generation_usage"] = None
         st.session_state["evaluation"] = None
         st.session_state["evaluation_error"] = None
+        st.session_state["evaluation_usage"] = None
 
         with st.spinner("Writing your story..."):
             try:
-                story = generate_story(age, concept, theme)
+                story, usage = generate_story(age, concept, theme, return_usage=True)
                 st.session_state["story"] = story
                 st.session_state["story_inputs"] = (age, concept, theme)
                 st.session_state["structural_checks"] = check_story_structure(story)
+                st.session_state["generation_usage"] = usage
             except Exception as error:
                 st.session_state["generation_error"] = str(error)
 
@@ -207,7 +211,7 @@ if story is not None:
 
         st.divider()
 
-        st.markdown("**AI Quality Check** _(calls the Sonnet judge model)_")
+        st.markdown("**AI Quality Check** _(calls the Opus 5 judge model)_")
         run_quality_check = st.button("Run AI Quality Check")
 
         if run_quality_check:
@@ -215,11 +219,12 @@ if story is not None:
 
             with st.spinner("Running AI quality evaluation..."):
                 try:
-                    evaluation = evaluate_story(
-                        eval_age, eval_concept, eval_theme, story
+                    evaluation, eval_usage = evaluate_story(
+                        eval_age, eval_concept, eval_theme, story, return_usage=True
                     )
                     st.session_state["evaluation"] = evaluation
                     st.session_state["evaluation_error"] = None
+                    st.session_state["evaluation_usage"] = eval_usage
                 except Exception as error:
                     st.session_state["evaluation_error"] = str(error)
 
@@ -248,5 +253,33 @@ if story is not None:
 
             st.markdown("**Evaluator summary**")
             st.write(evaluation.overall_summary)
+
+        st.divider()
+
+        st.markdown("**API Usage & Cost** _(estimated, developer-only)_")
+
+        generation_usage = st.session_state.get("generation_usage")
+        if generation_usage:
+            generation_cost = estimate_cost("claude-sonnet-5", generation_usage)
+            cost_text = f"${generation_cost:.4f}" if generation_cost is not None else "unknown"
+            st.write(
+                f"- **Story generation (Sonnet 5):** "
+                f"{generation_usage.input_tokens} input tokens, "
+                f"{generation_usage.output_tokens} output tokens "
+                f"(~{cost_text})"
+            )
+
+        evaluation_usage = st.session_state.get("evaluation_usage")
+        if evaluation_usage:
+            evaluation_cost = estimate_cost("claude-opus-5", evaluation_usage)
+            cost_text = f"${evaluation_cost:.4f}" if evaluation_cost is not None else "unknown"
+            st.write(
+                f"- **Quality check (Opus 5):** "
+                f"{evaluation_usage.input_tokens} input tokens, "
+                f"{evaluation_usage.output_tokens} output tokens "
+                f"(~{cost_text})"
+            )
+        else:
+            st.caption("Run the AI Quality Check above to see its usage and cost.")
 elif not submitted:
     st.info("Fill in the details above and click **Generate Story** to begin.")
