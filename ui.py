@@ -11,6 +11,15 @@ import html
 import streamlit as st
 
 
+FONT_IMPORTS = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Literata:ital,opsz,wght@0,18..36,400;0,18..36,500;1,18..36,400&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+>
+"""
+
 BASE_STYLES = """
 <style>
 :root {
@@ -23,6 +32,39 @@ BASE_STYLES = """
     --ms-border: #E7E4DA;
     --ms-accent: #C98A3B;
     --ms-accent-tint: #FBF2E7;
+    --ms-font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+    --ms-font-serif: "Literata", Georgia, "Iowan Old Style", serif;
+    --ms-font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@keyframes ms-card-enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ms-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ---- Type system ---- */
+/* :not([data-testid="stIconMaterial"]) keeps Material icon buttons
+   (Previous/Next/etc.) working - those render as ligatures in a
+   dedicated icon font, which a blanket font-family override breaks. */
+.stApp,
+.stApp p,
+.stApp span:not([data-testid="stIconMaterial"]),
+.stApp label,
+.stApp div {
+    font-family: var(--ms-font-body);
+}
+.mindsprout-header h1,
+.ms-form-title,
+.ms-cover h2,
+.ms-lesson-text {
+    font-family: var(--ms-font-display) !important;
+}
+.ms-page-text {
+    font-family: var(--ms-font-serif);
 }
 
 /* ---- Trim default Streamlit chrome (safe, CSS-only) ---- */
@@ -102,6 +144,7 @@ div[data-testid="stDecoration"] { display: none; }
 .ms-cover {
     text-align: center;
     padding: 0.25rem 0 1.25rem 0;
+    animation: ms-fade-in 0.4s ease;
 }
 .ms-cover .ms-eyebrow { justify-content: center; }
 .ms-cover h2 {
@@ -122,17 +165,37 @@ div[data-testid="stDecoration"] { display: none; }
 
 /* ---- Reading card ---- */
 .ms-page-card {
-    background: #FFFFFF;
+    position: relative;
+    background:
+        radial-gradient(circle at 100% 0%, rgba(46, 125, 50, 0.045), transparent 55%),
+        linear-gradient(180deg, #FFFFFF 0%, #FDFCF8 100%);
     border: 1px solid var(--ms-border);
-    border-radius: 20px;
-    padding: 2.1rem 1.9rem;
-    box-shadow: 0 6px 24px rgba(46, 125, 50, 0.07);
+    border-left: 4px solid var(--ms-green);
+    border-radius: 4px 20px 20px 4px;
+    padding: 2.3rem 2.2rem 2.3rem 2rem;
+    box-shadow:
+        0 1px 2px rgba(43, 51, 44, 0.05),
+        0 14px 32px rgba(46, 125, 50, 0.1);
     min-height: 220px;
     display: flex;
     align-items: center;
+    overflow: hidden;
+    animation: ms-card-enter 0.45s cubic-bezier(.16, 1, .3, 1);
+}
+.ms-page-card::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 22px 22px 0;
+    border-color: transparent var(--ms-cream) transparent transparent;
+    opacity: 0.7;
 }
 .ms-page-text {
-    font-size: 1.16rem;
+    font-size: 1.18rem;
     line-height: 1.85;
     color: var(--ms-text);
     margin: 0;
@@ -174,12 +237,15 @@ div[data-testid="stDecoration"] { display: none; }
     margin-bottom: 0.6rem;
 }
 .ms-lesson-card {
-    background: linear-gradient(180deg, var(--ms-accent-tint) 0%, #FFFFFF 100%);
+    background: linear-gradient(160deg, var(--ms-accent-tint) 0%, #FFFFFF 65%);
     border: 1px solid #EFD9B8;
     border-radius: 22px;
     padding: 2.6rem 2.1rem;
     text-align: center;
-    box-shadow: 0 10px 30px rgba(201, 138, 59, 0.1);
+    box-shadow:
+        0 1px 2px rgba(201, 138, 59, 0.06),
+        0 16px 36px rgba(201, 138, 59, 0.14);
+    animation: ms-card-enter 0.5s cubic-bezier(.16, 1, .3, 1);
 }
 .ms-lesson-mark {
     font-size: 1.6rem;
@@ -198,21 +264,27 @@ div.stButton > button,
 div.stFormSubmitButton > button {
     border-radius: 10px;
     font-weight: 600;
-    transition: transform 0.05s ease-in-out;
+    transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+div.stButton > button:hover,
+div.stFormSubmitButton > button:hover {
+    transform: translateY(-1px);
 }
 div.stButton > button:active,
 div.stFormSubmitButton > button:active {
-    transform: scale(0.98);
+    transform: scale(0.98) translateY(0);
 }
 button[kind="primary"] {
     background-color: var(--ms-green) !important;
     border-color: var(--ms-green) !important;
     color: #FFFFFF !important;
+    box-shadow: 0 4px 14px rgba(46, 125, 50, 0.22);
 }
 button[kind="primary"]:hover {
     background-color: var(--ms-green-dark) !important;
     border-color: var(--ms-green-dark) !important;
     color: #FFFFFF !important;
+    box-shadow: 0 6px 18px rgba(46, 125, 50, 0.3);
 }
 button[kind="secondary"] {
     border-color: var(--ms-border) !important;
@@ -220,10 +292,21 @@ button[kind="secondary"] {
     background-color: #FFFFFF !important;
 }
 
-/* ---- Example prompt chips ---- */
-div[data-testid="column"] div.stButton > button {
+/* ---- Example prompt chips (scoped to their own container only -
+   must not bleed into Previous/Next, Edit/Create, etc.) ---- */
+.st-key-ms_examples div.stButton > button {
     font-size: 0.85rem;
-    padding: 0.4rem 0.6rem;
+    font-weight: 600;
+    padding: 0.5rem 0.9rem;
+    border-radius: 999px;
+    background-color: var(--ms-green-tint) !important;
+    border-color: transparent !important;
+    color: var(--ms-green-dark) !important;
+    box-shadow: none;
+}
+.st-key-ms_examples div.stButton > button:hover {
+    background-color: #FFFFFF !important;
+    border-color: var(--ms-green) !important;
 }
 
 hr.ms-divider {
@@ -236,7 +319,8 @@ hr.ms-divider {
 @media (max-width: 480px) {
     .mindsprout-header h1 { font-size: 1.6rem; }
     .ms-cover h2 { font-size: 1.4rem; }
-    .ms-page-card { padding: 1.5rem 1.25rem; min-height: 180px; }
+    .ms-page-card { padding: 1.5rem 1.25rem 1.5rem 1.1rem; min-height: 180px; }
+    .ms-page-card::after { border-width: 0 14px 14px 0; }
     .ms-page-text { font-size: 1.05rem; }
     .ms-lesson-card { padding: 1.9rem 1.4rem; }
     .ms-lesson-text { font-size: 1.15rem; }
@@ -246,7 +330,7 @@ hr.ms-divider {
 
 
 def inject_base_styles():
-    st.markdown(BASE_STYLES, unsafe_allow_html=True)
+    st.markdown(FONT_IMPORTS + BASE_STYLES, unsafe_allow_html=True)
 
 
 def render_header():

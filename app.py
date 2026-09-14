@@ -98,6 +98,7 @@ LOADING_PHRASES = [
     "Planting the idea...",
     "Growing the characters...",
     "Turning the lesson into a story...",
+    "Almost ready...",
 ]
 
 defaults = {
@@ -273,11 +274,11 @@ def render_story_controls():
     st.markdown('<div class="ms-gap-sm"></div>', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Edit my idea", use_container_width=True):
+        if st.button("Edit my idea", icon=":material/edit:", use_container_width=True):
             edit_inputs()
             st.rerun()
     with col2:
-        if st.button("Create another story", use_container_width=True):
+        if st.button("Create another story", icon=":material/auto_awesome:", use_container_width=True):
             start_new_story()
             st.rerun()
 
@@ -337,13 +338,14 @@ if st.session_state["stage"] == "create":
                 type="primary",
             )
 
-        st.markdown('<div class="ms-examples-label">Need an idea? Try one of these</div>', unsafe_allow_html=True)
-        example_cols = st.columns(3)
-        for col, example in zip(example_cols, EXAMPLE_PROMPTS):
-            with col:
-                if st.button(example["label"], use_container_width=True, key=f"example_{example['label']}"):
-                    apply_example(example)
-                    st.rerun()
+        st.markdown('<div class="ms-examples-label">Need a spark? Try one of these</div>', unsafe_allow_html=True)
+        with st.container(key="ms_examples"):
+            example_cols = st.columns(3)
+            for col, example in zip(example_cols, EXAMPLE_PROMPTS):
+                with col:
+                    if st.button(example["label"], use_container_width=True, key=f"example_{example['label']}"):
+                        apply_example(example)
+                        st.rerun()
 
     if submitted:
         if not concept.strip():
@@ -406,7 +408,8 @@ if st.session_state["stage"] == "reading" and story is not None:
 
     with nav_col1:
         if st.button(
-            "← Previous",
+            "Previous",
+            icon=":material/chevron_left:",
             use_container_width=True,
             disabled=(current == 1),
         ):
@@ -415,8 +418,9 @@ if st.session_state["stage"] == "reading" and story is not None:
 
     with nav_col2:
         is_last_page = current >= total_pages
-        next_label = "See the lesson →" if is_last_page else "Next →"
-        if st.button(next_label, use_container_width=True, type="primary"):
+        next_label = "See the lesson" if is_last_page else "Next"
+        next_icon = ":material/auto_stories:" if is_last_page else ":material/chevron_right:"
+        if st.button(next_label, icon=next_icon, use_container_width=True, type="primary"):
             if is_last_page:
                 st.session_state["stage"] = "lesson"
             else:
@@ -440,13 +444,18 @@ elif st.session_state["stage"] == "lesson" and story is not None:
     lesson_col1, lesson_col2 = st.columns(2)
 
     with lesson_col1:
-        if st.button("← Back to story", use_container_width=True):
+        if st.button("Back to story", icon=":material/chevron_left:", use_container_width=True):
             st.session_state["stage"] = "reading"
             st.session_state["current_page"] = total_pages
             st.rerun()
 
     with lesson_col2:
-        if st.button("Read again from Page 1", use_container_width=True, type="primary"):
+        if st.button(
+            "Read again from Page 1",
+            icon=":material/replay:",
+            use_container_width=True,
+            type="primary",
+        ):
             st.session_state["stage"] = "reading"
             st.session_state["current_page"] = 1
             st.rerun()
