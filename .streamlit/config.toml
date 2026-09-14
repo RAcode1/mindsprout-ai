@@ -1,0 +1,12 @@
+# Forces the MindSprout brand's light theme regardless of the
+# visitor's OS/browser dark-mode setting. Without this, Streamlit's
+# native widgets (labels, sliders, text inputs) follow the device's
+# color scheme while our custom CSS backgrounds stay hardcoded light -
+# on a dark-mode device that produces near-invisible label text.
+
+[theme]
+base = "light"
+primaryColor = "#2E7D32"
+backgroundColor = "#FAF9F5"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#2B332C"
