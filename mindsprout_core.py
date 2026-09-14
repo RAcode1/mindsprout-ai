@@ -38,10 +38,77 @@ class EvaluationReport(BaseModel):
 
 
 # ==========================================
+# USAGE / COST TRACKING (DISPLAY ONLY)
+# ==========================================
+#
+# Pricing is per 1M tokens, keyed to the exact model strings used
+# below. This estimate is for display in the app's Developer / Quality
+# Check panel only - it never changes what is sent to the API and has
+# no effect on actual billing. Update these numbers if Anthropic's
+# published pricing for these models changes.
+
+MODEL_PRICING = {
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00},
+    "claude-opus-5": {"input": 5.00, "output": 25.00},
+}
+
+
+def estimate_cost(model, usage):
+    """Estimate USD cost from a response's usage metadata.
+
+    Returns None if the model has no known pricing or usage is
+    unavailable, so callers can display "unknown" instead of a wrong
+    number.
+    """
+
+    if usage is None:
+        return None
+
+    pricing = MODEL_PRICING.get(model)
+    if pricing is None:
+        return None
+
+    input_cost = usage.input_tokens / 1_000_000 * pricing["input"]
+    output_cost = usage.output_tokens / 1_000_000 * pricing["output"]
+
+    return input_cost + output_cost
+
+
+# ==========================================
+# OUTPUT LENGTH STRATEGY
+# ==========================================
+#
+# max_tokens is a safety ceiling, not a cost control - Anthropic bills
+# for tokens actually generated, not for the ceiling. This age-tiering
+# exists so naturally-shorter young-child stories get a tighter safety
+# cap, while naturally-longer, more nuanced older-audience stories keep
+# enough headroom to avoid truncation.
+#
+# The generator model (Sonnet 5) runs adaptive thinking by default even
+# though this app never requests it, and thinking tokens count against
+# the same max_tokens budget as the visible story text. These tiers
+# carry extra headroom versus a plain non-thinking model to keep that
+# from truncating the actual story output.
+
+def _max_tokens_for_age(age):
+    try:
+        age_value = int(age)
+    except (TypeError, ValueError):
+        age_value = 5
+
+    if age_value <= 6:
+        return 1500
+    elif age_value <= 12:
+        return 2200
+    else:
+        return 3500
+
+
+# ==========================================
 # STORY GENERATION
 # ==========================================
 
-def generate_story(age, concept, theme):
+def generate_story(age, concept, theme, return_usage=False):
 
     system_prompt = """
 You are MindSprout AI, an educational storyteller.
@@ -73,7 +140,7 @@ the reader can remember.
 
     message = client.messages.parse(
         model="claude-sonnet-5",
-        max_tokens=2500,
+        max_tokens=_max_tokens_for_age(age),
         system=system_prompt,
         messages=[
             {
@@ -84,6 +151,9 @@ the reader can remember.
         output_format=MindSproutStory,
     )
 
+    if return_usage:
+        return message.parsed_output, message.usage
+
     return message.parsed_output
 
 
@@ -91,7 +161,7 @@ the reader can remember.
 # STORY EVALUATION
 # ==========================================
 
-def evaluate_story(age, concept, theme, story):
+def evaluate_story(age, concept, theme, story, return_usage=False):
 
     judge_system_prompt = """
 You are a strict quality evaluator for MindSprout AI.
@@ -162,6 +232,9 @@ Is the content emotionally appropriate and safe?
         ],
         output_format=EvaluationReport,
     )
+
+    if return_usage:
+        return judge_message.parsed_output, judge_message.usage
 
     return judge_message.parsed_output
 
