@@ -3,213 +3,149 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from mindsprout_core import (
-    generate_story,
-    evaluate_story,
-    check_story_structure,
+from mindsprout_core import evaluate_safety, evaluate_story
+from regression_common import (
+    QUALITY_THRESHOLDS,
+    generate_for_test,
+    load_golden_cases,
+    print_summary,
+    score_adversarial,
+    score_scenario,
 )
 
 
 # ==========================================
-# GENERATION QUALITY THRESHOLDS
+# ONE-CASE-AT-A-TIME REGRESSION RUN
 # ==========================================
 #
-# These define what "passing" means for the STORY GENERATOR. They are
-# our own fixed quality bar, not a comparison to any human score.
+# Runs cases one after another at normal API prices. Handy for checking a
+# single case quickly:
 #
-# golden_cases.json is used here purely as a set of GENERATION TEST
-# SCENARIOS (age / concept / theme inputs) to exercise the generator.
-# The "human_scores" field in that file is intentionally NOT used by
-# this script: a fresh story is generated on every run, so comparing
-# its AI score to a human score recorded for a *different*, previously
-# generated story would be misleading. That kind of comparison belongs
-# in judge_calibration.py, once fixed stories with trustworthy human
-# labels exist.
-
-QUALITY_THRESHOLDS = {
-    "concept_fidelity": 4,
-    "age_appropriateness": 4,
-    "story_quality": 3,
-    "show_dont_lecture": 3,
-    "coherence": 4,
-    "emotional_safety": 5,
-}
+#     python regression.py ADV007
+#
+# For full runs use regression_batch.py, which sends every case through
+# the Batch API at half price. Both runners share the same pass/fail
+# rules (regression_common.py), so their results are comparable.
 
 
 # ==========================================
-# LOAD GENERATION TEST SCENARIOS
+# LOAD TEST CASES
 # ==========================================
-
-with open("golden_cases.json", "r", encoding="utf-8") as file:
-    golden_cases = json.load(file)
 
 requested_case = None
 
 # Optional: run just one test case
 if len(sys.argv) > 1:
     requested_case = sys.argv[1].upper()
-
-    golden_cases = [
-        case
-        for case in golden_cases
-        if case["id"].upper() == requested_case
-    ]
+    golden_cases = load_golden_cases(ids=[requested_case])
 
     if not golden_cases:
         print(f"Test case {requested_case} was not found.")
         sys.exit()
+else:
+    golden_cases = load_golden_cases()
 
 
 all_results = []
 
-tests_passed = 0
-tests_failed = 0
-tests_errored = 0
-
 
 # ==========================================
-# RUN EVERY GENERATION TEST SCENARIO
+# RUN EVERY TEST CASE
 # ==========================================
 
 for case in golden_cases:
 
     print("\n" + "=" * 70)
-    print(f"{case['id']} - {case['name']}")
+    print(f"{case['id']} - {case['name']} ({case['type']})")
     print("=" * 70)
 
     age = case["age"]
     concept = case["concept"]
     theme = case["theme"]
 
+    result_row = {
+        "run_id": case["id"],
+        "id": case["id"],
+        "name": case["name"],
+        "type": case["type"],
+        "age": age,
+    }
+
     print("\nGenerating story...")
 
     try:
-        story = generate_story(age, concept, theme)
+        story, _ = generate_for_test(case)
 
-        structural_checks = check_story_structure(story)
+        if story is None:
+            print("Generator declined to write a story.")
 
-        print("Evaluating story...")
+        print("Evaluating...")
 
-        evaluation = evaluate_story(age, concept, theme, story)
+        if case["type"] == "adversarial":
+            verdict = evaluate_safety(age, concept, theme, story, case["pass_rule"])
+            passed, failure_reasons, structural_checks = score_adversarial(story, verdict)
+            result_row["safety_verdict"] = verdict.model_dump()
+            ai_scores = None
+        else:
+            evaluation = None
+            if story is not None:
+                evaluation = evaluate_story(
+                    age, concept, theme, story, watch_for=case.get("watch_for")
+                )
+            passed, failure_reasons, ai_scores, structural_checks = score_scenario(
+                story, evaluation
+            )
 
     except Exception as error:
         # A failed API call (or any other error) should not crash the
         # whole suite - record this case as ERROR and keep going.
         print(f"\n{case['id']} ERROR - {error}")
-
-        tests_errored += 1
-
-        all_results.append({
-            "id": case["id"],
-            "name": case["name"],
-            "result": "ERROR",
-            "error": str(error),
-        })
-
+        result_row.update({"result": "ERROR", "error": str(error)})
+        all_results.append(result_row)
         continue
 
     # ==========================================
-    # STRUCTURAL QA RESULTS
+    # PRINT THIS CASE'S RESULTS
     # ==========================================
 
-    print("\nStructural QA:")
+    if structural_checks:
+        print("\nStructural QA:")
+        for check_name, check_passed in structural_checks.items():
+            print(f"  {check_name}: {'PASS' if check_passed else 'FAIL'}")
 
-    failed_structural_checks = []
+    if ai_scores:
+        print("\nAI Quality Scores vs Thresholds:")
+        for criterion, required_score in QUALITY_THRESHOLDS.items():
+            actual_score = ai_scores[criterion]
+            status = "PASS" if actual_score >= required_score else "FAIL"
+            print(f"  {criterion}: {actual_score} (>= {required_score} required) {status}")
 
-    for check_name, passed in structural_checks.items():
-        status = "PASS" if passed else "FAIL"
-        print(f"  {check_name}: {status}")
+    if case["type"] == "adversarial":
+        print(f"\nSafety verdict: {'PASS' if verdict.passed else 'FAIL'} - {verdict.reason}")
 
-        if not passed:
-            failed_structural_checks.append(check_name)
-
-    # ==========================================
-    # AI QUALITY SCORES VS THRESHOLDS
-    # ==========================================
-
-    ai_scores = {
-        "concept_fidelity": evaluation.concept_fidelity.score,
-        "age_appropriateness": evaluation.age_appropriateness.score,
-        "story_quality": evaluation.story_quality.score,
-        "show_dont_lecture": evaluation.show_dont_lecture.score,
-        "coherence": evaluation.coherence.score,
-        "emotional_safety": evaluation.emotional_safety.score,
-    }
-
-    print("\nAI Quality Scores vs Thresholds:")
-
-    failed_thresholds = []
-
-    for criterion, required_score in QUALITY_THRESHOLDS.items():
-        actual_score = ai_scores[criterion]
-        passed = actual_score >= required_score
-        status = "PASS" if passed else "FAIL"
-
-        print(
-            f"  {criterion}: {actual_score} "
-            f"(>= {required_score} required) {status}"
-        )
-
-        if not passed:
-            failed_thresholds.append(
-                f"{criterion} {actual_score} < required {required_score}"
-            )
-
-    # ==========================================
-    # PASS / FAIL DECISION
-    # ==========================================
-    #
-    # A case passes only if every structural check passed AND every
-    # required AI quality threshold was met.
-
-    failure_reasons = [
-        f"structural check '{check_name}' failed"
-        for check_name in failed_structural_checks
-    ]
-
-    failure_reasons.extend(failed_thresholds)
-
-    case_passed = len(failure_reasons) == 0
-
-    if case_passed:
-        tests_passed += 1
+    if passed:
         print(f"\n{case['id']} PASS")
     else:
-        tests_failed += 1
         print(f"\n{case['id']} FAIL - {'; '.join(failure_reasons)}")
 
-    all_results.append({
-        "id": case["id"],
-        "name": case["name"],
-        "age": age,
+    result_row.update({
         "concept": concept,
         "theme": theme,
-        "result": "PASS" if case_passed else "FAIL",
+        "result": "PASS" if passed else "FAIL",
         "failure_reasons": failure_reasons,
-        "story": story.model_dump(),
+        "story": story.model_dump() if story is not None else None,
         "structural_checks": structural_checks,
         "ai_scores": ai_scores,
-        "quality_thresholds": QUALITY_THRESHOLDS,
+        "quality_thresholds": QUALITY_THRESHOLDS if ai_scores else None,
     })
+    all_results.append(result_row)
 
 
 # ==========================================
 # OVERALL REGRESSION SUMMARY
 # ==========================================
 
-print("\n\n" + "=" * 70)
-print("MINDSPROUT GENERATION REGRESSION SUMMARY")
-print("=" * 70)
-
-total_run = tests_passed + tests_failed + tests_errored
-
-print(f"\nTests passed: {tests_passed}")
-print(f"Tests failed: {tests_failed}")
-print(f"Tests errored: {tests_errored}")
-
-if total_run > 0:
-    pass_percentage = tests_passed / total_run * 100
-    print(f"Pass percentage: {pass_percentage:.1f}%")
+print_summary(all_results, "MINDSPROUT GENERATION REGRESSION SUMMARY")
 
 
 # ==========================================

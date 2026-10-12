@@ -34,13 +34,55 @@ second, separate Claude model as a judge.
   Developer section) never silently re-triggers an API call.
 - **CLI app** (`mindsprout.py`) — the original interactive command-line
   version of the same flow, unchanged.
-- **Generation regression suite** (`regression.py`) — replays a fixed set
-  of test scenarios (`golden_cases.json`) through the generator and
-  checks the output against fixed quality thresholds. See inline
-  comments in that file for what it does and does not verify.
+- **Golden test set** (`golden_cases.json`) — 70 human-reviewed test
+  cases:
+  - **50 scenarios** across four age bands (2–4, 5–7, 8–12, 13–18), each
+    with a `watch_for` note describing the specific failure a reviewer
+    would look for (e.g. turning "boredom is okay" into "boredom leads to
+    creativity").
+  - **20 adversarial cases** — prompt injection, age-inappropriate
+    requests, harmful "lessons" (e.g. keeping secrets from parents),
+    misinformation, hateful themes, and unusual input (gibberish, a
+    5,000-character lesson, Spanish, age 1). Each has its own `pass_rule`,
+    because for these inputs *following* the lesson is the failure.
+- **Regression suite** — generates a story for every case and scores it:
+  structural checks, then a separate Claude Opus 5 judge (the quality
+  rubric for scenarios, the case's pass rule for adversarial cases).
+  - `regression_batch.py` — full runs through the Batch API at half
+    price; supports `--ids`, `--type`, `--repeats` (consistency) and
+    `--resume`.
+  - `regression.py` — one case at a time at normal price, for quick
+    checks (`python regression.py ADV007`).
+  - Both share the same pass/fail rules (`regression_common.py`).
 - **Judge calibration** (`judge_calibration.py`) — a documented skeleton
   for a future tool that checks whether the AI judge agrees with human
   scoring on a *fixed* story. Not implemented yet.
+
+## Baseline results (October 2026)
+
+First full run of all 70 golden cases through the Batch API (about $1.78):
+
+| | Passed |
+| --- | --- |
+| All cases | 55 / 70 (79%) |
+| Scenarios | 36 / 50 (72%) |
+| Adversarial / safety | 19 / 20 (95%) |
+
+What the run found:
+
+- **Malformed output** in 3 of 70 runs: an empty extra page, or a story
+  that stopped after one sentence with no core lesson.
+- **Lesson drift** — stories that swap the requested lesson for a related
+  one, exactly the failures the `watch_for` notes describe.
+- **Lecturing instead of showing**, and pages too long or confusing for
+  ages 2–4.
+- **One safety miss** — a request for romance content for a 6-year-old
+  produced a kiss scene instead of being redirected.
+- **Low variety** — two character names (Mia, Maya) appear in most
+  stories. The judge doesn't score this; it surfaced from analysing the
+  outputs.
+
+Next: prompt and validation fixes, then a re-run against this baseline.
 
 ## Running it locally
 
@@ -62,10 +104,11 @@ second, separate Claude model as a judge.
 
 Other entry points:
 - `python mindsprout.py` — interactive CLI version.
-- `python regression.py` — run the full generation regression suite.
-- `python regression.py TC001` — run a single test case (see
-  `golden_cases.json` for valid IDs). Each run is saved as a timestamped
-  file under `results/`.
+- `python regression_batch.py` — run the full regression suite through
+  the Batch API (half price; results usually arrive within minutes).
+- `python regression.py TC001` — run a single test case at normal price
+  (see `golden_cases.json` for valid IDs). Each run is saved as a
+  timestamped file under `results/`.
 
 ## Environment variables and secrets
 
@@ -98,9 +141,11 @@ app.py                       Streamlit frontend (entry point for the web app)
 ui.py                        Pure UI rendering helpers (CSS, header, page/lesson cards) used by app.py
 mindsprout.py                Original interactive CLI app
 mindsprout_core.py           Shared backend: story generation, AI evaluation, structural checks
-regression.py                Generation regression suite (fixed quality thresholds)
+regression_batch.py          Full regression runs through the Batch API (half price)
+regression.py                One-case-at-a-time regression runs (normal price)
+regression_common.py         Pass/fail rules and summary shared by both runners
 judge_calibration.py         Skeleton for future judge-vs-human calibration work
-golden_cases.json            Fixed generation test scenarios used by regression.py
+golden_cases.json            70 golden test cases (50 scenarios + 20 adversarial)
 requirements.txt             Python dependencies
 .streamlit/secrets.toml.example   Template showing the Streamlit Cloud secrets format
 .gitignore                   Excludes .env, .venv/, __pycache__/, results/, and secrets
