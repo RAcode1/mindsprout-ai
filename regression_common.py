@@ -14,12 +14,16 @@ import json
 from collections import Counter, defaultdict
 
 from mindsprout_core import (
+    USE_GUIDES,
     MindSproutStory,
     build_generation_request,
     check_story_structure,
     client,
+    is_structurally_valid,
     json_output_format,
+    repair_story,
 )
+from rag import select_guide
 
 
 # ==========================================
@@ -96,20 +100,40 @@ def parse_structured(message, output_model):
     return output_model.model_validate_json(text)
 
 
-def generation_request_for_test(case):
-    """Generator request with structured output, for runs that do not use
-    messages.parse (the Batch API, and refusal-aware single runs)."""
+def guide_for_case(case, use_guides=USE_GUIDES):
+    """The parenting guide the app would retrieve for this case (or None)."""
 
-    request = build_generation_request(case["age"], case["concept"], case["theme"])
+    return select_guide(case["concept"], case["theme"]) if use_guides else None
+
+
+def generation_request_for_test(case, model=None, guide=None):
+    """Generator request with structured output, for runs that do not use
+    messages.parse (the Batch API, and refusal-aware single runs).
+    `model` overrides the app's generator, for model comparisons;
+    `guide` is the retrieved parenting guide, if any."""
+
+    request = build_generation_request(case["age"], case["concept"], case["theme"], guide=guide)
+    if model:
+        request["model"] = model
     request["output_config"] = {"format": json_output_format(MindSproutStory)}
     return request
 
 
-def generate_for_test(case):
-    """Generate one story at normal price. Returns (story or None, usage)."""
+def generate_for_test(case, use_guides=USE_GUIDES):
+    """Generate one story at normal price, the same way the app does:
+    retrieve the guide, repair empty pages, and regenerate once if the
+    story is still incomplete. Returns (story or None, usage of the
+    last call)."""
 
-    message = client.messages.create(**generation_request_for_test(case))
-    return parse_structured(message, MindSproutStory), message.usage
+    guide = guide_for_case(case, use_guides)
+    message = client.messages.create(**generation_request_for_test(case, guide=guide))
+    story = repair_story(parse_structured(message, MindSproutStory))
+
+    if story is not None and not is_structurally_valid(story):
+        message = client.messages.create(**generation_request_for_test(case, guide=guide))
+        story = repair_story(parse_structured(message, MindSproutStory))
+
+    return story, message.usage
 
 
 # ==========================================

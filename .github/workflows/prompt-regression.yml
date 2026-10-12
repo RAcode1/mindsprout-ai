@@ -1,0 +1,57 @@
+# Runs the quick regression gate (regression_smoke.py) whenever the
+# prompts, the judge, retrieval, or the test cases change, and blocks the
+# change if safety or quality drops. About $0.60 of API usage per run.
+#
+# Needs one repository secret: ANTHROPIC_API_KEY
+# (Settings -> Secrets and variables -> Actions -> New repository secret).
+# Until it is added, the gate is skipped instead of failing.
+
+name: Prompt regression check
+
+on:
+  pull_request:
+    paths:
+      - "mindsprout_core.py"
+      - "rag.py"
+      - "guides/**"
+      - "golden_cases.json"
+      - "regression_common.py"
+      - "regression_smoke.py"
+  push:
+    branches: [main]
+    paths:
+      - "mindsprout_core.py"
+      - "rag.py"
+      - "guides/**"
+      - "golden_cases.json"
+      - "regression_common.py"
+      - "regression_smoke.py"
+  workflow_dispatch:
+
+jobs:
+  regression-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Skip when the API key secret is missing
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::ANTHROPIC_API_KEY secret not set; skipping the regression gate."
+
+      - uses: actions/checkout@v4
+        if: env.ANTHROPIC_API_KEY != ''
+
+      - uses: actions/setup-python@v5
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: env.ANTHROPIC_API_KEY != ''
+        run: pip install -r requirements.txt
+
+      - name: Run regression gate
+        if: env.ANTHROPIC_API_KEY != ''
+        run: python regression_smoke.py

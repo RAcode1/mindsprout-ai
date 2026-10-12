@@ -1,6 +1,10 @@
+from types import SimpleNamespace
+
 from anthropic import Anthropic, transform_schema
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, TypeAdapter
+
+from rag import select_guide
 
 load_dotenv()
 
@@ -50,6 +54,7 @@ class EvaluationReport(BaseModel):
 MODEL_PRICING = {
     "claude-sonnet-5": {"input": 2.00, "output": 10.00},
     "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
 }
 
 
@@ -110,6 +115,10 @@ def _max_tokens_for_age(age):
 
 GENERATOR_MODEL = "claude-sonnet-5"
 JUDGE_MODEL = "claude-opus-5"
+JUDGE_MAX_TOKENS = 8000
+
+# Retrieval (rag.py): ground each story in the best-matching parenting guide.
+USE_GUIDES = True
 
 
 def json_output_format(output_model):
@@ -138,15 +147,40 @@ age-appropriate stories.
 
 Rules:
 - Use language appropriate for the person's age.
-- Teach through the story instead of lecturing.
+- Teach through the story instead of lecturing. Show the lesson
+  through what the characters do, say, and feel; keep any direct
+  explanation to one short line near the end.
 - Use concrete situations the audience can understand.
 - Keep the tone appropriate for the selected age.
 - Preserve the exact lesson requested.
-- Do not replace it with a different but related lesson.
+- Do not replace it with a different but related lesson, and do not
+  add a reward or benefit the parent did not ask for. If the lesson
+  says something is okay as it is, keep it okay as it is.
+- For ages 4 and under, use one to three very short, simple sentences
+  per page and keep one consistent point of view.
+- Give characters varied, fitting names. Avoid overused defaults such
+  as Mia, Maya, Max, or Lily.
+- Keep everyday details safe: if a character does something risky,
+  show it being handled safely.
+- Write in English unless the parent explicitly asks for another
+  language.
+- If a parenting guide is provided, use it only if it fits the lesson
+  the parent asked for. When it fits, follow its key points, avoid what
+  it says to avoid, and never contradict it. When it does not fit,
+  ignore it and do not bring its topic into the story.
+
+Safety comes before every other rule. If the lesson or theme asks for
+something that is not safe or not appropriate for the child's age
+(such as romance, violence, frightening content, or harmful advice),
+leave it out and write a gentle, age-appropriate story about a closely
+related safe lesson instead. For children under 8, redirect to a light,
+everyday lesson such as courage, kindness, or solving disagreements, not
+to heavy topics like death or loss, unless the parent is clearly asking
+for help with a real loss.
 """
 
 
-def build_generation_request(age, concept, theme):
+def build_generation_request(age, concept, theme, model=GENERATOR_MODEL, guide=None):
 
     user_prompt = f"""
 Create a short 6-page story.
@@ -155,14 +189,22 @@ Age: {age}
 Lesson to teach: {concept}
 Story theme: {theme}
 
-There must be exactly 6 pages.
+There must be exactly 6 pages, and every page must have story text.
 
 At the end, give one simple core lesson
 the reader can remember.
 """
 
+    if guide is not None:
+        user_prompt += f"""
+Parenting guide for this topic (follow it; do not contradict it):
+<guide title="{guide.title}">
+{guide.text}
+</guide>
+"""
+
     return {
-        "model": GENERATOR_MODEL,
+        "model": model,
         "max_tokens": _max_tokens_for_age(age),
         "system": GENERATOR_SYSTEM_PROMPT,
         "messages": [
@@ -174,17 +216,55 @@ the reader can remember.
     }
 
 
+def repair_story(story):
+    """Drop empty pages and renumber the rest.
+
+    Fixes the most common structural slip seen in regression runs: a
+    stray empty page after an otherwise complete story. Returns None
+    unchanged (the model declined).
+    """
+
+    if story is None:
+        return None
+
+    story.pages = [page for page in story.pages if page.story_text.strip()]
+    for number, page in enumerate(story.pages, start=1):
+        page.page_number = number
+
+    return story
+
+
+def is_structurally_valid(story):
+    return story is not None and all(check_story_structure(story).values())
+
+
 def generate_story(age, concept, theme, return_usage=False):
 
-    message = client.messages.parse(
-        **build_generation_request(age, concept, theme),
-        output_format=MindSproutStory,
-    )
+    guide = select_guide(concept, theme) if USE_GUIDES else None
+
+    def attempt():
+        message = client.messages.parse(
+            **build_generation_request(age, concept, theme, guide=guide),
+            output_format=MindSproutStory,
+        )
+        return repair_story(message.parsed_output), message.usage
+
+    story, usage = attempt()
+
+    # Safety net: if the story is still incomplete after repair (e.g. it
+    # stopped after one page), regenerate once. Usage covers both calls
+    # so the app's cost display stays accurate.
+    if story is not None and not is_structurally_valid(story):
+        story, retry_usage = attempt()
+        usage = SimpleNamespace(
+            input_tokens=usage.input_tokens + retry_usage.input_tokens,
+            output_tokens=usage.output_tokens + retry_usage.output_tokens,
+        )
 
     if return_usage:
-        return message.parsed_output, message.usage
+        return story, usage
 
-    return message.parsed_output
+    return story
 
 
 # ==========================================
@@ -262,7 +342,9 @@ REVIEWER NOTE - a specific failure to watch for in this case:
 
     request = {
         "model": JUDGE_MODEL,
-        "max_tokens": 3000,
+        # Room for the judge's thinking plus six written reasons. 3000
+        # cut off the grading of one long teen story mid-answer.
+        "max_tokens": JUDGE_MAX_TOKENS,
         "system": JUDGE_SYSTEM_PROMPT,
         "messages": [
             {
@@ -292,6 +374,58 @@ def evaluate_story(age, concept, theme, story, return_usage=False, effort=None, 
         return judge_message.parsed_output, judge_message.usage
 
     return judge_message.parsed_output
+
+
+# ==========================================
+# FAITHFULNESS TO THE RETRIEVED GUIDE
+# ==========================================
+#
+# With retrieval, a story can still ignore or contradict the guide it
+# was given - the story-writing version of a hallucination. This check
+# compares the story with its guide; it is reported on its own and does
+# not change the quality rubric above.
+
+class FaithfulnessVerdict(BaseModel):
+    faithful: bool
+    reason: str
+
+
+FAITHFULNESS_SYSTEM_PROMPT = """
+You check whether a children's story stays faithful to the parenting
+guide it was written from. A story is unfaithful if it contradicts one
+of the guide's key points or does something the guide says to avoid.
+Leaving out some key points is fine; a short story cannot cover them
+all. Judge the story only against the guide, not general quality.
+"""
+
+
+def build_faithfulness_request(age, concept, story, guide):
+
+    prompt = f"""
+AGE:
+{age}
+
+PARENT'S LESSON:
+{concept}
+
+GUIDE:
+{guide.text}
+
+STORY:
+{story.model_dump_json(indent=2)}
+"""
+
+    return {
+        "model": JUDGE_MODEL,
+        "max_tokens": JUDGE_MAX_TOKENS,
+        "system": FAITHFULNESS_SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+    }
 
 
 # ==========================================
@@ -352,7 +486,7 @@ APP OUTPUT:
 
     return {
         "model": JUDGE_MODEL,
-        "max_tokens": 3000,
+        "max_tokens": JUDGE_MAX_TOKENS,
         "system": SAFETY_JUDGE_SYSTEM_PROMPT,
         "messages": [
             {
